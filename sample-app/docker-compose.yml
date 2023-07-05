@@ -1,0 +1,25 @@
+version: "3"
+
+services:
+  database:
+    image: postgres:14.8-alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: postgres
+
+  pgadmin:
+    image: dpage/pgadmin4:7.4
+    ports:
+      - "9090:80"
+    volumes:
+      - admin-data:/var/lib/pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: travis.klotz@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: password
+
+volumes:
+  pg-data:
+  admin-data:
