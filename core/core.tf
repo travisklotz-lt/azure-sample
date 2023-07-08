@@ -15,7 +15,6 @@ terraform {
   }
 }
 
-# Configure the Microsoft Azure Provider
 provider "azurerm" {
   features {
     resource_group {
@@ -42,11 +41,40 @@ resource "azurerm_virtual_network" "core" {
   address_space       = ["10.0.0.0/16"]
 }
 
+resource "azurerm_route_table" "vpn" {
+  name                = "vpn-aware"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+resource "azurerm_route" "vpn-1" {
+  name                   = "vpn-1"
+  resource_group_name    = azurerm_resource_group.rg.name
+  route_table_name       = azurerm_route_table.vpn.name
+  address_prefix         = "172.27.224.0/20"
+  next_hop_type          = "VirtualAppliance"
+  next_hop_in_ip_address = "10.0.1.4"
+}
+
+resource "azurerm_route" "vpn-2" {
+  name                   = "vpn-2"
+  resource_group_name    = azurerm_resource_group.rg.name
+  route_table_name       = azurerm_route_table.vpn.name
+  address_prefix         = "172.27.240.0/20"
+  next_hop_type          = "VirtualAppliance"
+  next_hop_in_ip_address = "10.0.1.4"
+}
+
 resource "azurerm_subnet" "public" {
   name                 = "public"
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.core.name
   address_prefixes     = ["10.0.1.0/24"]
+}
+
+resource "azurerm_subnet_route_table_association" "public-vpn" {
+  subnet_id      = azurerm_subnet.public.id
+  route_table_id = azurerm_route_table.vpn.id
 }
 
 resource "azurerm_subnet" "private" {
@@ -56,32 +84,29 @@ resource "azurerm_subnet" "private" {
   address_prefixes     = ["10.0.2.0/24"]
 
   delegation {
-      name = "Postgresql"
-      service_delegation {
-          name = "Microsoft.DBforPostgreSQL/flexibleServers"
-          actions = [
-              "Microsoft.Network/virtualNetworks/subnets/join/action"
-          ]
-      }
+    name = "Postgresql"
+    service_delegation {
+      name = "Microsoft.DBforPostgreSQL/flexibleServers"
+      actions = [
+        "Microsoft.Network/virtualNetworks/subnets/join/action"
+      ]
+    }
   }
+
+  service_endpoints = [
+    "Microsoft.Storage"
+  ]
+
+}
+
+resource "azurerm_subnet_route_table_association" "private-vpn" {
+  subnet_id      = azurerm_subnet.private.id
+  route_table_id = azurerm_route_table.vpn.id
 }
 
 resource "azurerm_dns_zone" "azure" {
   name                = "azure.kalak451.net"
   resource_group_name = azurerm_resource_group.rg.name
-}
-
-resource "azurerm_private_dns_zone" "internal" {
-  name                = "internal.azure.kalak451.net"
-  resource_group_name = azurerm_resource_group.rg.name
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "core" {
-  name                  = "core-link"
-  resource_group_name   = azurerm_resource_group.rg.name
-  private_dns_zone_name = azurerm_private_dns_zone.internal.name
-  virtual_network_id    = azurerm_virtual_network.core.id
-  registration_enabled  = true
 }
 
 resource "azurerm_public_ip" "bastion" {
@@ -96,23 +121,23 @@ resource "azurerm_dns_a_record" "bastion_dns" {
   zone_name           = azurerm_dns_zone.azure.name
   resource_group_name = azurerm_resource_group.rg.name
   ttl                 = 60
-  records             = [
-      azurerm_public_ip.bastion.ip_address
+  records = [
+    azurerm_public_ip.bastion.ip_address
   ]
 }
 
 resource "azurerm_network_interface" "bastion_nic" {
-  name                = "bastion-nic"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-
-  internal_dns_name_label = "bastion"
+  name                 = "bastion-nic"
+  location             = azurerm_resource_group.rg.location
+  resource_group_name  = azurerm_resource_group.rg.name
+  enable_ip_forwarding = true
 
   ip_configuration {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.public.id
-    private_ip_address_allocation = "Dynamic"
+    private_ip_address_allocation = "Static"
     public_ip_address_id          = azurerm_public_ip.bastion.id
+    private_ip_address            = "10.0.1.4"
     primary                       = true
   }
 }
@@ -139,9 +164,15 @@ resource "azurerm_linux_virtual_machine" "bastion" {
   }
 
   source_image_reference {
-    publisher = "Canonical"
-    offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts-gen2"
+    publisher = "openvpn"
+    offer     = "openvpnas"
+    sku       = "openvpnas"
     version   = "latest"
+  }
+
+  plan {
+    name="openvpnas"
+    product="openvpnas"
+    publisher="openvpn"
   }
 }
